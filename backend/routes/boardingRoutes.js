@@ -3,7 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Boarding = require('../models/Boarding');
-const Waitlist = require('../models/Waitlist'); // 👈 Imported the Waitlist model
+const Waitlist = require('../models/Waitlist');
 
 // --- 1. Multer Setup for Image Uploads ---
 const storage = multer.diskStorage({
@@ -16,13 +16,14 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// --- 2. AI Description Generator Route (Your Unique Feature!) ---
+// --- 2. AI Description Generator Route ---
 router.post('/generate-description', async (req, res) => {
     try {
         const { features } = req.body; 
         
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+        // Using the updated Flash model for speed
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
         const prompt = `Write a short, engaging, and professional real estate description for a student boarding place with the following features: ${features}. Keep it under 2 paragraphs and highlight its appeal to university students.`;
 
@@ -97,8 +98,9 @@ router.patch('/:id/status', async (req, res) => {
                 console.log(`\n🔔 ALERT: Boarding ${boardingId} is available!`);
 
                 for (let entry of waitingList) {
-                    console.log(`✉️ Sending email to Student ID: ${entry.studentId}`);
-                    notifiedStudents.push(entry.studentId);
+                    // UPDATED: Now logs the Name and Email instead of studentId
+                    console.log(`✉️ Sending email to: ${entry.studentName} (${entry.studentEmail})`);
+                    notifiedStudents.push(entry.studentEmail);
 
                     entry.notified = true;
                     await entry.save();
@@ -121,15 +123,16 @@ router.patch('/:id/status', async (req, res) => {
 // --- 6. Join the Waitlist (For Students) ---
 router.post('/:id/waitlist', async (req, res) => {
     try {
-        const { studentId } = req.body; 
+        // UPDATED: Destructuring Name and Email from the frontend prompt
+        const { studentName, studentEmail } = req.body; 
         const boardingId = req.params.id;
 
-        const existingEntry = await Waitlist.findOne({ boardingId, studentId });
+        const existingEntry = await Waitlist.findOne({ boardingId, studentEmail });
         if (existingEntry) {
              return res.status(400).json({ message: "You are already on the waitlist!" });
         }
 
-        const newWaitlist = new Waitlist({ boardingId, studentId });
+        const newWaitlist = new Waitlist({ boardingId, studentName, studentEmail });
         await newWaitlist.save();
 
         res.status(201).json({ message: "Successfully added to the waitlist!" });
@@ -137,6 +140,51 @@ router.post('/:id/waitlist', async (req, res) => {
         console.error("Waitlist Error:", error);
         res.status(500).json({ message: "Server Error" });
     }
+});
+
+// --- 7. Get Waitlist for a specific boarding (Owner Action) ---
+// NEW: The frontend needs this to show the popup!
+router.get('/:id/waitlist', async (req, res) => {
+  try {
+    const list = await Waitlist.find({ boardingId: req.params.id }).sort({ createdAt: 1 });
+    res.json(list);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Error fetching waitlist" });
+  }
+});
+
+// --- 8. DELETE a boarding listing ---
+router.delete('/:id', async (req, res) => {
+  try {
+    const deletedBoarding = await Boarding.findByIdAndDelete(req.params.id);
+    if (!deletedBoarding) {
+      return res.status(404).json({ message: "Boarding not found" });
+    }
+    res.json({ message: "Boarding deleted successfully!" });
+  } catch (err) {
+    console.error("Delete Error:", err);
+    res.status(500).json({ message: "Server error while deleting" });
+  }
+});
+
+// --- 9. UPDATE a boarding listing ---
+router.put('/:id', async (req, res) => {
+  try {
+    const updatedBoarding = await Boarding.findByIdAndUpdate(
+      req.params.id, 
+      req.body, 
+      { new: true } 
+    );
+    
+    if (!updatedBoarding) {
+      return res.status(404).json({ message: "Boarding not found" });
+    }
+    res.json(updatedBoarding);
+  } catch (err) {
+    console.error("Update Error:", err);
+    res.status(500).json({ message: "Server error while updating" });
+  }
 });
 
 module.exports = router;
