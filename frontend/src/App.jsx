@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Sparkles, MapPin, Users, Home, PlusCircle, LayoutDashboard, Edit2, X } from 'lucide-react';
+import { Sparkles, MapPin, Users, Home, PlusCircle, LayoutDashboard, Edit2, X, ShieldCheck, AlertTriangle } from 'lucide-react';
 
 function App() {
   const [activeTab, setActiveTab] = useState('browse'); 
@@ -9,8 +9,13 @@ function App() {
   const [loadingAI, setLoadingAI] = useState(false);
   const [myListings, setMyListings] = useState([]);
   const [editingId, setEditingId] = useState(null);
+  
+  // NEW: AI Verification State
+  const [isVerifyingImage, setIsVerifyingImage] = useState(false);
+  const [aiTags, setAiTags] = useState([]);
+  const [isImageLegit, setIsImageLegit] = useState(null);
 
-  // NEW WAITLIST STATE
+  // WAITLIST STATE
   const [waitlistData, setWaitlistData] = useState([]);
   const [showWaitlistModal, setShowWaitlistModal] = useState(false);
 
@@ -35,6 +40,33 @@ function App() {
     setLoadingAI(false);
   };
 
+  // --- NEW: AI Image Verification Function ---
+  const verifyImageWithAI = async () => {
+    if (images.length === 0) return alert("Please select an image first!");
+    
+    setIsVerifyingImage(true);
+    const data = new FormData();
+    data.append('image', images[0]); // We will scan the first image uploaded
+
+    try {
+      const res = await axios.post('http://localhost:5001/api/boardings/verify-image', data);
+      
+      if (res.data.isLegitimate) {
+        setIsImageLegit(true);
+        setAiTags(res.data.tags);
+        // Automatically add these tags to the features text box!
+        setFormData({ ...formData, features: formData.features + (formData.features ? ", " : "") + res.data.tags.join(', ') });
+      } else {
+        setIsImageLegit(false);
+        setAiTags([]);
+        alert("⚠️ AI Warning: This does not look like a legitimate room or house interior. Please upload a valid photo.");
+      }
+    } catch (err) {
+      alert("AI Image Scan Failed.");
+    }
+    setIsVerifyingImage(false);
+  };
+
   const handleEditClick = (item) => {
     setEditingId(item._id);
     setFormData({
@@ -45,6 +77,9 @@ function App() {
       features: '', 
       description: item.description
     });
+    // Reset AI validation when editing
+    setIsImageLegit(null);
+    setAiTags([]);
     setActiveTab('add'); 
   };
 
@@ -60,6 +95,7 @@ function App() {
       } catch (err) { alert("Failed to update."); }
     } else {
       const data = new FormData();
+      // WE ARE BACK TO THE HARDCODED ID HERE
       data.append('ownerId', '64a7c9f8e4b0a1c2d3e4f5a6');
       Object.keys(formData).forEach(key => data.append(key, formData[key]));
       images.forEach(img => data.append('images', img));
@@ -69,6 +105,8 @@ function App() {
         alert("Boarding Published!");
         setFormData({ title: '', location: '', price: '', genderAllowed: 'Any', features: '', description: '' });
         setImages([]);
+        setIsImageLegit(null);
+        setAiTags([]);
         setActiveTab('dashboard'); 
       } catch (err) { alert("Error adding."); }
     }
@@ -99,7 +137,6 @@ function App() {
     setActiveTab('dashboard');
   };
 
-  // --- NEW WAITLIST FUNCTIONS ---
   const joinWaitlist = async (boardingId) => {
     const studentName = window.prompt("Enter your Name to join the waitlist:");
     if (!studentName) return;
@@ -133,10 +170,7 @@ function App() {
       {/* NAVIGATION BAR */}
       <nav className="bg-white border-b border-slate-200 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div 
-            onClick={() => setActiveTab('browse')}
-            className="flex items-center gap-2 font-bold text-indigo-600 text-xl cursor-pointer hover:opacity-80 transition"
-          >
+          <div onClick={() => setActiveTab('browse')} className="flex items-center gap-2 font-bold text-indigo-600 text-xl cursor-pointer hover:opacity-80 transition">
             <Home size={24}/> <span>BoardingHub</span>
           </div>
           <div className="flex gap-2 md:gap-4 overflow-x-auto">
@@ -195,16 +229,12 @@ function App() {
                         <p className="text-xl font-black text-slate-900">Rs. {item.price}</p>
                       </div>
                       
-                      {/* UPDATED: Notify Me triggers Waitlist */}
                       {item.status === 'Available' ? (
                         <button className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold transition shadow-md active:scale-95">
                           Contact
                         </button>
                       ) : (
-                        <button 
-                          onClick={() => joinWaitlist(item._id)}
-                          className="bg-slate-900 hover:bg-black text-white px-5 py-2.5 rounded-xl text-sm font-bold transition shadow-md flex items-center gap-2 active:scale-95"
-                        >
+                        <button onClick={() => joinWaitlist(item._id)} className="bg-slate-900 hover:bg-black text-white px-5 py-2.5 rounded-xl text-sm font-bold transition shadow-md flex items-center gap-2 active:scale-95">
                           <Users size={16}/> Notify Me
                         </button>
                       )}
@@ -224,37 +254,71 @@ function App() {
                 <h2 className="text-2xl font-bold">{editingId ? 'Edit Listing' : 'Create New Listing'}</h2>
                 <p className="text-slate-500 text-sm">{editingId ? 'Update your existing details' : 'Fill in the details for SLIIT students'}</p>
               </div>
-              {editingId && (
-                <button onClick={cancelEdit} className="text-sm font-bold text-slate-500 hover:text-red-500">
-                  Cancel Edit
-                </button>
-              )}
+              {editingId && <button onClick={cancelEdit} className="text-sm font-bold text-slate-500 hover:text-red-500">Cancel Edit</button>}
             </div>
             <form onSubmit={handleSubmit} className="p-8 space-y-6">
+              
+              {/* --- NEW: AI Image Verification Section --- */}
+              {!editingId && (
+                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 space-y-4">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="flex-1">
+                      <label className="font-bold text-slate-800 block mb-1">Upload Room Photos</label>
+                      <input type="file" multiple className="text-sm text-slate-500 w-full" onChange={(e) => {
+                          setImages([...e.target.files]);
+                          setIsImageLegit(null); // Reset status if they pick a new image
+                          setAiTags([]);
+                        }} 
+                      />
+                    </div>
+                    
+                    <button 
+                      type="button" 
+                      onClick={verifyImageWithAI}
+                      disabled={images.length === 0 || isVerifyingImage}
+                      className={`px-5 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition ${images.length > 0 ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                    >
+                      <Sparkles size={16}/> {isVerifyingImage ? "Scanning..." : "AI Vision Scan"}
+                    </button>
+                  </div>
+
+                  {/* AI Scan Results Area */}
+                  {isImageLegit !== null && (
+                    <div className={`p-4 rounded-xl border ${isImageLegit ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                      <p className={`font-bold text-sm mb-2 flex items-center gap-1 ${isImageLegit ? 'text-green-700' : 'text-red-700'}`}>
+                        {isImageLegit ? <ShieldCheck size={18}/> : <AlertTriangle size={18}/>}
+                        {isImageLegit ? 'AI Verified Interior' : 'AI Flagged: Invalid Image'}
+                      </p>
+                      {aiTags.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {aiTags.map((tag, idx) => (
+                            <span key={idx} className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <input type="text" value={formData.title} placeholder="Title" className="border p-3 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" onChange={(e) => setFormData({...formData, title: e.target.value})} />
                 <input type="text" value={formData.location} placeholder="Location" className="border p-3 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" onChange={(e) => setFormData({...formData, location: e.target.value})} />
                 <input type="number" value={formData.price} placeholder="Monthly Price" className="border p-3 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" onChange={(e) => setFormData({...formData, price: e.target.value})} />
                 <select value={formData.genderAllowed} className="border p-3 rounded-xl outline-none bg-white" onChange={(e) => setFormData({...formData, genderAllowed: e.target.value})}>
-                  <option value="Any">Any Gender</option>
-                  <option value="Male">Male Only</option>
-                  <option value="Female">Female Only</option>
+                  <option value="Any">Any Gender</option><option value="Male">Male Only</option><option value="Female">Female Only</option>
                 </select>
               </div>
               <div className="bg-indigo-50 p-6 rounded-2xl border border-indigo-100 space-y-4">
                 <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
                   <label className="font-bold text-indigo-900 flex items-center gap-2 text-xs uppercase"><Sparkles size={16}/> AI Description Assistant</label>
-                  <button type="button" onClick={generateAIDescription} className="bg-indigo-600 text-white px-5 py-2 rounded-xl text-sm font-bold hover:shadow-lg transition">
-                    {loadingAI ? "AI Writing..." : "Generate with AI"}
-                  </button>
+                  <button type="button" onClick={generateAIDescription} className="bg-indigo-600 text-white px-5 py-2 rounded-xl text-sm font-bold hover:shadow-lg transition">{loadingAI ? "AI Writing..." : "Generate with AI"}</button>
                 </div>
                 <input type="text" value={formData.features} placeholder="e.g. 5 min to SLIIT, WiFi, AC included" className="w-full p-3 rounded-xl border-none shadow-inner" onChange={(e) => setFormData({...formData, features: e.target.value})} />
               </div>
               <textarea rows="4" value={formData.description} placeholder="Final description..." className="w-full border p-4 rounded-xl outline-none" onChange={(e) => setFormData({...formData, description: e.target.value})} />
-              
-              {!editingId && (
-                <input type="file" multiple className="text-sm text-slate-500" onChange={(e) => setImages([...e.target.files])} />
-              )}
               
               <button type="submit" className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold text-lg hover:bg-black transition shadow-xl flex justify-center items-center gap-2">
                 {editingId ? <><Edit2 size={20}/> Update Listing</> : 'Publish Listing'}
@@ -281,18 +345,13 @@ function App() {
                   </div>
                   <p className="text-sm text-slate-500 line-clamp-3">{item.description}</p>
                   
-                  {/* UPDATED: Added View Waitlist Button */}
                   <div className="pt-4 flex flex-col gap-2">
                     <div className="flex gap-2">
                       <button onClick={() => toggleStatus(item._id, item.status)} className="flex-1 py-3 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-black transition shadow-md">
                         Mark as {item.status === 'Available' ? 'Full' : 'Available'}
                       </button>
-                      <button onClick={() => handleEditClick(item)} className="px-4 py-3 bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold hover:bg-indigo-200 transition">
-                        Edit
-                      </button>
-                      <button onClick={() => deleteListing(item._id)} className="px-4 py-3 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold hover:bg-red-500 hover:text-white transition">
-                        Delete
-                      </button>
+                      <button onClick={() => handleEditClick(item)} className="px-4 py-3 bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold hover:bg-indigo-200 transition">Edit</button>
+                      <button onClick={() => deleteListing(item._id)} className="px-4 py-3 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold hover:bg-red-500 hover:text-white transition">Delete</button>
                     </div>
                     
                     {item.status === 'Full' && (
