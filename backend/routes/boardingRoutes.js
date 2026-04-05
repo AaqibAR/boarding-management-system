@@ -1,3 +1,4 @@
+const fs = require('fs');
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -22,8 +23,8 @@ router.post('/generate-description', async (req, res) => {
         const { features } = req.body; 
         
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        // Using the updated Flash model for speed
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        // The modern, lightning-fast model for text
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
         const prompt = `Write a short, engaging, and professional real estate description for a student boarding place with the following features: ${features}. Keep it under 2 paragraphs and highlight its appeal to university students.`;
 
@@ -35,6 +36,49 @@ router.post('/generate-description', async (req, res) => {
     } catch (error) {
         console.error("AI Generation Error:", error);
         res.status(500).json({ message: "Failed to generate description" });
+    }
+});
+
+// --- 2.5 AI Image Verification & Auto-Tagging ---
+router.post('/verify-image', upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ message: "No image uploaded for verification" });
+
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        // The exact same model now handles Vision automatically!
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+        // Convert the image into a Base64 string that Gemini can "see"
+        const imagePath = req.file.path;
+        const mimeType = req.file.mimetype;
+        const imagePart = {
+            inlineData: {
+                data: Buffer.from(fs.readFileSync(imagePath)).toString("base64"),
+                mimeType
+            }
+        };
+
+        const prompt = `Analyze this image. Is it a legitimate interior of a room, house, or boarding place? What furniture or amenities are visible? 
+        Respond STRICTLY in JSON format with no markdown formatting or extra text. Example:
+        {
+            "isLegitimate": true,
+            "tags": ["Bed", "Ceiling Fan", "Desk", "Window"]
+        }`;
+
+        const result = await model.generateContent([prompt, imagePart]);
+        const responseText = result.response.text();
+        
+        // Clean up the JSON string in case Gemini adds markdown like ```json
+        const cleanJsonString = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+        const verificationData = JSON.parse(cleanJsonString);
+
+        // Delete the temporary file from the server since we only needed it for the AI scan
+        fs.unlinkSync(imagePath);
+
+        res.status(200).json(verificationData);
+    } catch (error) {
+        console.error("AI Image Scan Error:", error);
+        res.status(500).json({ message: "Failed to scan image" });
     }
 });
 
@@ -98,7 +142,6 @@ router.patch('/:id/status', async (req, res) => {
                 console.log(`\n🔔 ALERT: Boarding ${boardingId} is available!`);
 
                 for (let entry of waitingList) {
-                    // UPDATED: Now logs the Name and Email instead of studentId
                     console.log(`✉️ Sending email to: ${entry.studentName} (${entry.studentEmail})`);
                     notifiedStudents.push(entry.studentEmail);
 
@@ -123,7 +166,6 @@ router.patch('/:id/status', async (req, res) => {
 // --- 6. Join the Waitlist (For Students) ---
 router.post('/:id/waitlist', async (req, res) => {
     try {
-        // UPDATED: Destructuring Name and Email from the frontend prompt
         const { studentName, studentEmail } = req.body; 
         const boardingId = req.params.id;
 
@@ -143,7 +185,6 @@ router.post('/:id/waitlist', async (req, res) => {
 });
 
 // --- 7. Get Waitlist for a specific boarding (Owner Action) ---
-// NEW: The frontend needs this to show the popup!
 router.get('/:id/waitlist', async (req, res) => {
   try {
     const list = await Waitlist.find({ boardingId: req.params.id }).sort({ createdAt: 1 });
